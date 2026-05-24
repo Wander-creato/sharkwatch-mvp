@@ -14,11 +14,9 @@ class SharkDetector:
         self.workflow_id = "general-segmentation-api"
         self.last_inference_time = 0
         self.inference_interval = 1.0  # Safe network throttling: 1 frame/sec
-        self.confidence_threshold = 0.25
-        self.target_classes = (
-            "shark, fish, stingray, ray, dolphin, sealion, seal, person, swimmer, "
-            "surfer, boat, vessel, kayak, paddleboard, baot, pes, prt"
-        )
+        self.confidence_threshold = 0.15
+        self.shark_confidence_threshold = 0.05
+        self.target_classes = "boat, shark, stingray, person, dolphin, baot, kelp, pes, prt, sealion"
         self.threat_classes = {"shark"}
         self.shark_candidate_classes = {"fish", "stingray", "ray"}
         self.people_or_vessel_classes = {
@@ -60,7 +58,7 @@ class SharkDetector:
                 workflow_id=self.workflow_id,
                 images={"image": temp_filename},
                 parameters={"classes": self.target_classes},
-                use_cache=False,
+                use_cache=True,
             )
 
             shark_count = 0
@@ -70,13 +68,14 @@ class SharkDetector:
             predictions = self._extract_predictions(result)
 
             if not predictions:
-                print(f"[AI CORE WARNING] No predictions parsed from workflow response type: {type(result).__name__}")
+                print(f"[AI CORE WARNING] No predictions parsed from workflow response: {self._summarize_payload(result)}")
 
             for pred in predictions:
                 cls_name = self._normalize_class_name(pred.get("class", pred.get("class_name", pred.get("label", ""))))
                 confidence = float(pred.get("confidence", pred.get("score", 0.0)) or 0.0)
 
-                if not cls_name or confidence < self.confidence_threshold:
+                min_confidence = self._minimum_confidence_for_class(cls_name)
+                if not cls_name or confidence < min_confidence:
                     continue
 
                 box = self._extract_box(pred)
@@ -130,11 +129,29 @@ class SharkDetector:
 
         return self.cached_predictions
 
+    def _minimum_confidence_for_class(self, cls_name):
+        if cls_name in self.threat_classes:
+            return self.shark_confidence_threshold
+        return self.confidence_threshold
+
+    def _summarize_payload(self, payload, depth=0):
+        if depth >= 3:
+            return type(payload).__name__
+        if isinstance(payload, dict):
+            return {key: self._summarize_payload(value, depth + 1) for key, value in list(payload.items())[:8]}
+        if isinstance(payload, list):
+            return [self._summarize_payload(item, depth + 1) for item in payload[:2]]
+        return type(payload).__name__
+
     def _extract_predictions(self, payload):
         predictions = []
 
         def walk(node):
             if isinstance(node, dict):
+                sv_predictions = self._extract_supervision_detections(node)
+                if sv_predictions:
+                    predictions.extend(sv_predictions)
+
                 direct_predictions = node.get("predictions")
                 if isinstance(direct_predictions, list):
                     predictions.extend(
@@ -156,6 +173,61 @@ class SharkDetector:
 
         walk(payload)
         return self._deduplicate_predictions(predictions)
+
+    def _extract_supervision_detections(self, node):
+        xyxy_values = node.get("xyxy")
+        if not isinstance(xyxy_values, list) or not xyxy_values:
+            return []
+
+        data = node.get("data") if isinstance(node.get("data"), dict) else {}
+        confidences = self._as_list(node.get("confidence") or data.get("confidence"))
+        class_names = self._as_list(
+            data.get("class_name")
+            or data.get("class")
+            or data.get("label")
+            or node.get("class_name")
+            or node.get("class")
+            or node.get("label")
+        )
+        class_ids = self._as_list(node.get("class_id") or data.get("class_id"))
+        class_map = data.get("class_map") or node.get("class_map") or {}
+
+        predictions = []
+        for index, box in enumerate(xyxy_values):
+            if not isinstance(box, (list, tuple)) or len(box) < 4:
+                continue
+
+            class_name = self._value_at(class_names, index, "")
+            if not class_name:
+                class_id = self._value_at(class_ids, index, "")
+                class_name = class_map.get(str(class_id), class_map.get(class_id, ""))
+
+            confidence = self._value_at(confidences, index, 1.0)
+            predictions.append(
+                {
+                    "class": class_name,
+                    "confidence": confidence,
+                    "x1": box[0],
+                    "y1": box[1],
+                    "x2": box[2],
+                    "y2": box[3],
+                }
+            )
+        return predictions
+
+    def _as_list(self, value):
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        if isinstance(value, tuple):
+            return list(value)
+        return [value]
+
+    def _value_at(self, values, index, default):
+        if not values or index >= len(values):
+            return default
+        return values[index]
 
     def _looks_like_prediction(self, item):
         has_class = any(key in item for key in ("class", "class_name", "label"))
