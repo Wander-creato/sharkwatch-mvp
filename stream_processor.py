@@ -12,14 +12,23 @@ class VideoStreamProcessor:
         self.started = False
         self.read_lock = threading.Lock()
         self.thread = None
+        self.cap = None
+        self.last_error = None
+        self.last_reconnect_attempt = 0
 
         print(f"[SYSTEM] Connecting to YouTube live stream: {self.video_path}")
+        self.cap = self._open_capture()
+
+    def _open_capture(self):
         # Resolve YouTube URL to a standard readable video stream (480p targeted for performance)
         try:
-            self.cap = cap_from_youtube(self.video_path, "480p")
+            capture = cap_from_youtube(self.video_path, "480p")
+            self.last_error = None
+            return capture
         except Exception as e:
+            self.last_error = str(e)
             print(f"[HARDWARE ERROR] Failed to load YouTube stream: {e}")
-            self.cap = cv2.VideoCapture(0)  # Fallback to webcam if stream resolution fails
+            return cv2.VideoCapture(0)  # Fallback to webcam if stream resolution fails
 
     def start(self):
         if self.started:
@@ -32,18 +41,40 @@ class VideoStreamProcessor:
 
     def update(self):
         while self.started:
-            ret, frame = self.cap.read()
-            if not ret:
-                # Re-establish stream connection seamlessly if it hits the end or drops
-                try:
-                    self.cap = cap_from_youtube(self.video_path, "480p")
-                except Exception:
-                    time.sleep(2)
-                continue
-            with self.read_lock:
-                self.ret = ret
-                self.frame = frame
-            time.sleep(0.03)  # Standardize feed to roughly ~30 FPS
+            try:
+                if self.cap is None or not self.cap.isOpened():
+                    self._reconnect()
+                    time.sleep(1)
+                    continue
+
+                ret, frame = self.cap.read()
+                if not ret or frame is None:
+                    # Re-establish stream connection seamlessly if it hits the end or drops
+                    self._reconnect()
+                    time.sleep(1)
+                    continue
+
+                with self.read_lock:
+                    self.ret = ret
+                    self.frame = frame
+                time.sleep(0.03)  # Standardize feed to roughly ~30 FPS
+            except Exception as e:
+                self.last_error = str(e)
+                print(f"[STREAM ERROR] Frame acquisition fault: {e}")
+                self._reconnect()
+                time.sleep(2)
+
+    def _reconnect(self):
+        current_time = time.time()
+        if current_time - self.last_reconnect_attempt < 2:
+            return
+
+        self.last_reconnect_attempt = current_time
+        if self.cap is not None:
+            self.cap.release()
+
+        print("[SYSTEM] Reconnecting to video stream...")
+        self.cap = self._open_capture()
 
     def read(self):
         with self.read_lock:
@@ -51,8 +82,18 @@ class VideoStreamProcessor:
                 return self.ret, self.frame.copy()
             return self.ret, None
 
+    def status(self):
+        with self.read_lock:
+            has_frame = self.frame is not None
+        return {
+            "connected": bool(self.cap is not None and self.cap.isOpened()),
+            "has_frame": has_frame,
+            "last_error": self.last_error,
+        }
+
     def stop(self):
         self.started = False
         if self.thread is not None and self.thread.is_alive():
-            self.thread.join()
-        self.cap.release()
+            self.thread.join(timeout=3)
+        if self.cap is not None:
+            self.cap.release()

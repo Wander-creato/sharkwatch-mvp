@@ -80,10 +80,8 @@
             osc.stop(audioCtx.currentTime + 0.18);
         }
 
-        // Establish full communication stream matrix
+        // Establish full communication stream matrix with automatic reconnects
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const ws = new WebSocket(`${protocol}//${window.location.host}/ws/alerts`);
-
         const videoFeed = document.getElementById("video-feed");
         const alertBanner = document.getElementById("alert-banner");
         const alertText = document.getElementById("alert-text");
@@ -92,46 +90,90 @@
         const logContainer = document.getElementById("log-container");
 
         let lastStatus = "SAFE";
+        let reconnectTimer = null;
+        let ws = null;
 
-        ws.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-
-            if (data.image) {
-                videoFeed.src = data.image;
+        function connectWebSocket() {
+            if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+                return;
             }
 
-            sharkCounter.innerText = data.shark_count;
-            surferCounter.innerText = data.surfer_count;
+            ws = new WebSocket(`${protocol}//${window.location.host}/ws/alerts`);
 
-            if (data.status === "DANGER") {
-                sharkCounter.classList.add("text-red-500", "scale-110");
-                sharkCounter.classList.remove("text-slate-100");
-
-                alertBanner.className = "animate-flash-red py-4 px-6 text-center font-bold text-xl tracking-wider border-b border-red-900 shadow-lg text-white";
-                alertText.innerText = `🚨 COMPORTEMENT SQUALE DETECTÉ (${data.shark_count}) - ACTION REQUIS IMMÉDIATE 🚨`;
-
-                if (lastStatus !== "DANGER") {
-                    addLog("🚨 THREAT ALERTE : Présence de squale confirmée par analyse d'image.", "text-red-400 font-bold");
-                    lastStatus = "DANGER";
-                    alarmInterval = setInterval(playEmergencyBeep, 450);
+            ws.onopen = () => {
+                addLog("[SYSTEM] Liaison de communication WebSocket active.", "text-cyan-400");
+                if (reconnectTimer) {
+                    clearTimeout(reconnectTimer);
+                    reconnectTimer = null;
                 }
-            } else {
-                sharkCounter.classList.remove("text-red-500", "scale-110");
-                sharkCounter.classList.add("text-slate-100");
+            };
 
-                alertBanner.className = "bg-emerald-600 py-4 px-6 text-center font-bold text-xl tracking-wider border-b border-emerald-800 shadow-lg text-white";
-                alertText.innerText = "✓ SURVEILLANCE NOMINALE : PAS DE SQUALE DÉTECTÉ DANS LE CHAMP";
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
 
-                if (lastStatus === "DANGER") {
-                    addLog("✓ RESOLVED : Sortie de cible de la zone de danger.", "text-emerald-400");
-                    lastStatus = "SAFE";
-                    clearInterval(alarmInterval);
+                if (data.image) {
+                    videoFeed.src = data.image;
                 }
-            }
-        };
 
-        ws.onopen = () => addLog("[SYSTEM] Liaison de communication WebSocket active.", "text-cyan-400");
-        ws.onclose = () => addLog("[SYSTEM ERROR] Interruption de connexion avec la passerelle vidéo.", "text-red-500");
+                sharkCounter.innerText = data.shark_count;
+                surferCounter.innerText = data.surfer_count;
+
+                if (data.status === "CONNECTING") {
+                    setSystemBanner(data.message || "Connexion au flux video en cours...");
+                    return;
+                }
+
+                if (data.status === "ERROR") {
+                    setSystemBanner(data.message || "Traitement video temporairement indisponible.", true);
+                    return;
+                }
+
+                if (data.status === "DANGER") {
+                    sharkCounter.classList.add("text-red-500", "scale-110");
+                    sharkCounter.classList.remove("text-slate-100");
+
+                    alertBanner.className = "animate-flash-red py-4 px-6 text-center font-bold text-xl tracking-wider border-b border-red-900 shadow-lg text-white";
+                    alertText.innerText = `🚨 COMPORTEMENT SQUALE DETECTÉ (${data.shark_count}) - ACTION REQUIS IMMÉDIATE 🚨`;
+
+                    if (lastStatus !== "DANGER") {
+                        addLog("🚨 THREAT ALERTE : Présence de squale confirmée par analyse d'image.", "text-red-400 font-bold");
+                        lastStatus = "DANGER";
+                        alarmInterval = setInterval(playEmergencyBeep, 450);
+                    }
+                } else {
+                    sharkCounter.classList.remove("text-red-500", "scale-110");
+                    sharkCounter.classList.add("text-slate-100");
+
+                    alertBanner.className = "bg-emerald-600 py-4 px-6 text-center font-bold text-xl tracking-wider border-b border-emerald-800 shadow-lg text-white";
+                    alertText.innerText = "✓ SURVEILLANCE NOMINALE : PAS DE SQUALE DÉTECTÉ DANS LE CHAMP";
+
+                    if (lastStatus === "DANGER") {
+                        addLog("✓ RESOLVED : Sortie de cible de la zone de danger.", "text-emerald-400");
+                        lastStatus = "SAFE";
+                        clearInterval(alarmInterval);
+                    }
+                }
+            };
+
+            ws.onerror = () => {
+                addLog("[SYSTEM WARNING] Erreur WebSocket detectee, reconnexion en cours.", "text-amber-400");
+            };
+
+            ws.onclose = () => {
+                clearInterval(alarmInterval);
+                alarmInterval = null;
+                setSystemBanner("Connexion a la passerelle video interrompue, reconnexion automatique...", true);
+                addLog("[SYSTEM WARNING] Passerelle video deconnectee, nouvelle tentative dans 2 secondes.", "text-amber-400");
+                reconnectTimer = setTimeout(connectWebSocket, 2000);
+            };
+        }
+
+        function setSystemBanner(message, warning = false) {
+            alertBanner.className = warning
+                ? "bg-amber-600 py-4 px-6 text-center font-bold text-xl tracking-wider border-b border-amber-800 shadow-lg text-white"
+                : "bg-sky-700 py-4 px-6 text-center font-bold text-xl tracking-wider border-b border-sky-900 shadow-lg text-white";
+            alertText.innerText = message;
+        }
 
         function addLog(message, colorClass = "text-slate-400") {
             const time = new Date().toLocaleTimeString();
@@ -141,6 +183,8 @@
             logContainer.appendChild(logEntry);
             logContainer.scrollTop = logContainer.scrollHeight;
         }
+
+        connectWebSocket();
     </script>
 </body>
 </html>

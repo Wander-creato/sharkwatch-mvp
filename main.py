@@ -24,6 +24,19 @@ async def get_dashboard(request: Request):
     return templates.TemplateResponse("dashboard.html", {"request": request})
 
 
+def build_status_payload(status="CONNECTING", message="Initialisation du flux video..."):
+    stream_status = streamer.status()
+    return {
+        "status": status,
+        "shark_count": 0,
+        "surfer_count": 0,
+        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "image": "",
+        "message": message,
+        "stream": stream_status,
+    }
+
+
 @app.websocket("/ws/alerts")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
@@ -33,41 +46,64 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             ret, frame = streamer.read()
             if not ret or frame is None:
-                await asyncio.sleep(0.03)
+                await websocket.send_text(
+                    json.dumps(
+                        build_status_payload(
+                            message="Connexion au flux YouTube en cours, tentative de recuperation automatique..."
+                        )
+                    )
+                )
+                await asyncio.sleep(1)
                 continue
 
-            # Pass image tensor directly into the background throttled analysis logic
-            ai_results = detector.analyze_frame(frame)
+            try:
+                # Pass image tensor into throttled analysis logic without blocking the ASGI event loop
+                ai_results = await asyncio.to_thread(detector.analyze_frame, frame)
 
-            # Draw real-time bounding overlays via OpenCV
-            for item in ai_results["boxes"]:
-                x1, y1, x2, y2 = item["box"]
-                cv2.rectangle(frame, (x1, y1), (x2, y2), item["color"], 3)
-                cv2.putText(
-                    frame,
-                    item["label"],
-                    (x1, y1 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    item["color"],
-                    2,
+                # Draw real-time bounding overlays via OpenCV
+                for item in ai_results.get("boxes", []):
+                    x1, y1, x2, y2 = item["box"]
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), item["color"], 3)
+                    cv2.putText(
+                        frame,
+                        item["label"],
+                        (x1, max(y1 - 10, 20)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        item["color"],
+                        2,
+                    )
+
+                # Scale frame dimension to fit web view standard profiles efficiently
+                small_frame = cv2.resize(frame, (854, 480))
+                encoded, buffer = cv2.imencode(".jpg", small_frame)
+                if not encoded:
+                    await websocket.send_text(
+                        json.dumps(build_status_payload("ERROR", "Encodage video temporairement indisponible."))
+                    )
+                    await asyncio.sleep(0.25)
+                    continue
+
+                base64_frame = base64.b64encode(buffer).decode("utf-8")
+
+                payload = {
+                    "status": ai_results.get("status", "SAFE"),
+                    "shark_count": ai_results.get("shark_count", 0),
+                    "surfer_count": ai_results.get("surfer_count", 0),
+                    "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    "image": f"data:image/jpeg;base64,{base64_frame}",
+                    "message": "Flux nominal",
+                    "stream": streamer.status(),
+                }
+
+                await websocket.send_text(json.dumps(payload))
+                await asyncio.sleep(0.04)  # Output target matches standard Web display rates (~25fps)
+            except Exception as e:
+                print(f"[SYSTEM WARNING] Frame processing disruption: {e}")
+                await websocket.send_text(
+                    json.dumps(build_status_payload("ERROR", "Traitement video temporairement indisponible."))
                 )
-
-            # Scale frame dimension to fit web view standard profiles efficiently
-            small_frame = cv2.resize(frame, (854, 480))
-            _, buffer = cv2.imencode(".jpg", small_frame)
-            base64_frame = base64.b64encode(buffer).decode("utf-8")
-
-            payload = {
-                "status": ai_results["status"],
-                "shark_count": ai_results["shark_count"],
-                "surfer_count": ai_results["surfer_count"],
-                "timestamp": datetime.now().strftime("%H:%M:%S"),
-                "image": f"data:image/jpeg;base64,{base64_frame}",
-            }
-
-            await websocket.send_text(json.dumps(payload))
-            await asyncio.sleep(0.04)  # Output target matches standard Web display rates (~25fps)
+                await asyncio.sleep(1)
 
     except WebSocketDisconnect:
         print("[SYSTEM] Mission Control interface closed connection.")
