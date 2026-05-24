@@ -52,7 +52,13 @@ class SharkDetector:
             # Compress to JPG to limit outbound payload sizes
             cv2.imwrite(temp_filename, frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
 
-            # Run Roboflow Cloud Workflow
+            # Run Roboflow Cloud Workflow. This requires inference-sdk >= 0.29.2.
+            if not hasattr(self.client, "run_workflow"):
+                raise RuntimeError(
+                    "The installed inference-sdk is too old for Roboflow Workflows. "
+                    "Run: python -m pip install --upgrade 'inference-sdk==0.44.1'"
+                )
+
             result = self.client.run_workflow(
                 workspace_name=self.workspace_name,
                 workflow_id=self.workflow_id,
