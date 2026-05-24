@@ -57,7 +57,7 @@ class VideoStreamProcessor:
 
             print("[SYSTEM] Resolving YouTube stream URL through yt-dlp fallback...")
             ydl_opts = {
-                "format": "best[height<=480][ext=mp4]/best[height<=720][ext=mp4]/best[ext=mp4]/best",
+                "format": "best[protocol^=m3u8][height<=480]/best[protocol^=m3u8][height<=720]/best[height<=480][ext=mp4]/best[height<=720][ext=mp4]/best",
                 "quiet": True,
                 "no_warnings": False,
                 "noplaylist": True,
@@ -68,7 +68,9 @@ class VideoStreamProcessor:
             stream_url = info.get("url")
             if not stream_url:
                 formats = info.get("formats", [])
-                for fmt in reversed(formats):
+                hls_formats = [fmt for fmt in formats if str(fmt.get("protocol", "")).startswith("m3u8")]
+                candidate_formats = hls_formats or formats
+                for fmt in reversed(candidate_formats):
                     height = fmt.get("height") or 0
                     candidate_url = fmt.get("url")
                     if candidate_url and height <= 720:
