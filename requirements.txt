@@ -1,0 +1,8 @@
+fastapi==0.110.0
+uvicorn==0.28.0
+opencv-python-headless==4.9.0.80
+inference-sdk==0.9.12
+jinja2==3.1.3
+numpy==1.26.4
+cap-from-youtube==0.1.1
+yt-dlp
