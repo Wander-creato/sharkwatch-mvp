@@ -34,6 +34,7 @@ def build_status_payload(status="CONNECTING", message="Initialisation du flux vi
         "image": "",
         "message": message,
         "stream": stream_status,
+        "detected_classes": [],
     }
 
 
@@ -94,6 +95,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "image": f"data:image/jpeg;base64,{base64_frame}",
                     "message": "Flux nominal",
                     "stream": streamer.status(),
+                    "detected_classes": ai_results.get("detected_classes", []),
                 }
 
                 await websocket.send_text(json.dumps(payload))

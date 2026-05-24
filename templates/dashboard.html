@@ -90,6 +90,7 @@
         const logContainer = document.getElementById("log-container");
 
         let lastStatus = "SAFE";
+        let lastDetectionSignature = "";
         let reconnectTimer = null;
         let ws = null;
 
@@ -126,6 +127,12 @@
                 if (data.status === "ERROR") {
                     setSystemBanner(data.message || "Traitement video temporairement indisponible.", true);
                     return;
+                }
+
+                const detectionSignature = (data.detected_classes || []).join(", ");
+                if (detectionSignature && detectionSignature !== lastDetectionSignature) {
+                    addLog(`Détections IA : ${detectionSignature}`, "text-cyan-300");
+                    lastDetectionSignature = detectionSignature;
                 }
 
                 if (data.status === "DANGER") {
