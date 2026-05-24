@@ -48,7 +48,7 @@ class SharkDetector:
             return self.cached_predictions
 
         self.last_inference_time = current_time
-        temp_filename = "temp_inference_frame.jpg"
+        temp_filename = f"temp_inference_frame_{int(current_time * 1000)}.jpg"
 
         try:
             # Compress to JPG to limit outbound payload sizes
@@ -60,7 +60,7 @@ class SharkDetector:
                 workflow_id=self.workflow_id,
                 images={"image": temp_filename},
                 parameters={"classes": self.target_classes},
-                use_cache=True,
+                use_cache=False,
             )
 
             shark_count = 0
