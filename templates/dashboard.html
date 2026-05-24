@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHARKWATCH NC - Mission Control</title>
+    <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+    <style>
+        @keyframes flash-red {
+            0%, 100% { background-color: #ef4444; }
+            50% { background-color: #7f1d1d; }
+        }
+        .animate-flash-red { animation: flash-red 1s infinite; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 font-sans min-h-screen flex flex-col">
+
+    <!-- Emergency Warning Banner -->
+    <div id="alert-banner" class="bg-emerald-600 transition-all duration-300 py-4 px-6 text-center font-bold text-xl tracking-wider border-b border-slate-800 shadow-lg">
+        <span id="alert-text">INITIALISATION DU LINK YOUTUBE STREAM...</span>
+    </div>
+
+    <!-- Main Workspace -->
+    <div class="flex-1 grid grid-cols-1 lg:grid-cols-4 gap-6 p-6">
+
+        <!-- Viewport Monitor (3/4 Screen width) -->
+        <div class="lg:col-span-3 bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl flex flex-col">
+            <div class="bg-slate-850 px-4 py-3 border-b border-slate-800 flex justify-between items-center">
+                <h2 class="font-semibold text-sm tracking-wide text-slate-400 uppercase">Flux Drone • YouTube Remote Streaming</h2>
+                <div class="flex items-center gap-2">
+                    <span class="w-2.5 h-2.5 bg-red-500 rounded-full animate-ping"></span>
+                    <span class="text-xs text-slate-300 font-mono">REMOTE LINKED</span>
+                </div>
+            </div>
+            <div class="flex-1 bg-black flex items-center justify-center relative min-h-[400px]">
+                <img id="video-feed" src="" alt="Traitement de la source vidéo en cours..." class="w-full h-auto max-h-[70vh] object-contain">
+            </div>
+        </div>
+
+        <!-- Telemetry Feeds & Event Logging (1/4 Screen width) -->
+        <div class="flex flex-col gap-6">
+
+            <!-- Statistical Telemetry Tracking Matrix -->
+            <div class="bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl grid grid-cols-2 gap-4">
+                <div class="bg-slate-950 p-4 rounded-lg border border-slate-800 text-center">
+                    <p class="text-xs font-semibold uppercase text-slate-500 tracking-wider">Requins</p>
+                    <p id="shark-counter" class="text-3xl font-black text-slate-100 mt-1">0</p>
+                </div>
+                <div class="bg-slate-950 p-4 rounded-lg border border-slate-800 text-center">
+                    <p class="text-xs font-semibold uppercase text-slate-500 tracking-wider">Cibles Actives</p>
+                    <p id="surfer-counter" class="text-3xl font-black text-slate-100 mt-1">0</p>
+                </div>
+            </div>
+
+            <!-- Terminal System Logs -->
+            <div class="flex-1 bg-slate-900 border border-slate-800 rounded-xl p-5 shadow-xl flex flex-col">
+                <h3 class="font-bold text-xs uppercase tracking-wider text-slate-400 border-b border-slate-800 pb-3 mb-3">Journal Tactique Opérationnel</h3>
+                <div id="log-container" class="flex-1 overflow-y-auto space-y-2 text-xs font-mono max-h-[45vh]">
+                    <div class="text-slate-500">[SYSTEM] Attente d'établissement de flux...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Web Audio API Synthesizer Core -->
+    <script>
+        let audioCtx = null;
+        let alarmInterval = null;
+
+        function playEmergencyBeep() {
+            if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            let osc = audioCtx.createOscillator();
+            let gain = audioCtx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(580, audioCtx.currentTime);
+            gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.18);
+        }
+
+        // Establish full communication stream matrix
+        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const ws = new WebSocket(`${protocol}//${window.location.host}/ws/alerts`);
+
+        const videoFeed = document.getElementById("video-feed");
+        const alertBanner = document.getElementById("alert-banner");
+        const alertText = document.getElementById("alert-text");
+        const sharkCounter = document.getElementById("shark-counter");
+        const surferCounter = document.getElementById("surfer-counter");
+        const logContainer = document.getElementById("log-container");
+
+        let lastStatus = "SAFE";
+
+        ws.onmessage = function(event) {
+            const data = JSON.parse(event.data);
+
+            if (data.image) {
+                videoFeed.src = data.image;
+            }
+
+            sharkCounter.innerText = data.shark_count;
+            surferCounter.innerText = data.surfer_count;
+
+            if (data.status === "DANGER") {
+                sharkCounter.classList.add("text-red-500", "scale-110");
+                sharkCounter.classList.remove("text-slate-100");
+
+                alertBanner.className = "animate-flash-red py-4 px-6 text-center font-bold text-xl tracking-wider border-b border-red-900 shadow-lg text-white";
+                alertText.innerText = `🚨 COMPORTEMENT SQUALE DETECTÉ (${data.shark_count}) - ACTION REQUIS IMMÉDIATE 🚨`;
+
+                if (lastStatus !== "DANGER") {
+                    addLog("🚨 THREAT ALERTE : Présence de squale confirmée par analyse d'image.", "text-red-400 font-bold");
+                    lastStatus = "DANGER";
+                    alarmInterval = setInterval(playEmergencyBeep, 450);
+                }
+            } else {
+                sharkCounter.classList.remove("text-red-500", "scale-110");
+                sharkCounter.classList.add("text-slate-100");
+
+                alertBanner.className = "bg-emerald-600 py-4 px-6 text-center font-bold text-xl tracking-wider border-b border-emerald-800 shadow-lg text-white";
+                alertText.innerText = "✓ SURVEILLANCE NOMINALE : PAS DE SQUALE DÉTECTÉ DANS LE CHAMP";
+
+                if (lastStatus === "DANGER") {
+                    addLog("✓ RESOLVED : Sortie de cible de la zone de danger.", "text-emerald-400");
+                    lastStatus = "SAFE";
+                    clearInterval(alarmInterval);
+                }
+            }
+        };
+
+        ws.onopen = () => addLog("[SYSTEM] Liaison de communication WebSocket active.", "text-cyan-400");
+        ws.onclose = () => addLog("[SYSTEM ERROR] Interruption de connexion avec la passerelle vidéo.", "text-red-500");
+
+        function addLog(message, colorClass = "text-slate-400") {
+            const time = new Date().toLocaleTimeString();
+            const logEntry = document.createElement("div");
+            logEntry.className = colorClass;
+            logEntry.innerText = `[${time}] ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+    </script>
+</body>
+</html>
